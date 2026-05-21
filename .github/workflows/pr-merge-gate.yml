@@ -1,0 +1,102 @@
+name: PR Merge Gate
+
+on:
+  pull_request:
+    branches: [main, master]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  merge-gate:
+    name: Merge gate check
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check required status checks
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pullRequest = context.payload.pull_request;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = pullRequest.number;
+
+            // Wait for checks to complete
+            console.log('⏳ Waiting for CI checks to complete...');
+            
+            let checksComplete = false;
+            let attempts = 0;
+            const maxAttempts = 120; // 10 minutes with 5 second intervals
+
+            while (!checksComplete && attempts < maxAttempts) {
+              const checkRuns = await github.rest.checks.listForRef({
+                owner,
+                repo,
+                ref: pullRequest.head.sha,
+              });
+
+              const requiredChecks = ['Lint', 'Unit tests', 'E2E tests'];
+              const completedChecks = checkRuns.data.check_runs.filter(
+                check => requiredChecks.includes(check.name) && check.status === 'completed'
+              );
+
+              if (completedChecks.length === requiredChecks.length) {
+                checksComplete = true;
+                console.log('✅ All CI checks have completed');
+              } else {
+                console.log(`⏳ Waiting... ${completedChecks.length}/${requiredChecks.length} checks completed`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+              }
+              attempts++;
+            }
+
+            if (!checksComplete) {
+              core.setFailed('⚠️ CI checks did not complete within timeout period');
+              return;
+            }
+
+            // Verify all required checks passed
+            const checkRuns = await github.rest.checks.listForRef({
+              owner,
+              repo,
+              ref: pullRequest.head.sha,
+            });
+
+            const requiredChecks = ['Lint', 'Unit tests', 'E2E tests'];
+            const results = {};
+
+            for (const checkName of requiredChecks) {
+              const check = checkRuns.data.check_runs.find(c => c.name === checkName);
+              if (!check) {
+                results[checkName] = '⚠️ Missing';
+              } else if (check.conclusion === 'success') {
+                results[checkName] = '✅ Passed';
+              } else {
+                results[checkName] = `❌ ${check.conclusion}`;
+              }
+            }
+
+            // Generate summary
+            let summary = '## Merge Gate Status\n\n';
+            let allPassed = true;
+
+            for (const [checkName, status] of Object.entries(results)) {
+              summary += `- ${status} ${checkName}\n`;
+              if (!status.includes('✅')) {
+                allPassed = false;
+              }
+            }
+
+            summary += '\n';
+            if (allPassed) {
+              summary += '✅ **All required checks passed. Ready to merge when approved.**';
+            } else {
+              summary += '❌ **Some checks failed. Please review and fix before merging.**';
+            }
+
+            core.summary
+              .addRaw(summary)
+              .write();
+
+            if (!allPassed) {
+              core.setFailed('One or more required checks failed');
+            }

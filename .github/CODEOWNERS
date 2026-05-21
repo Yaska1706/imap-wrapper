@@ -1,0 +1,14 @@
+# CODEOWNERS for IMAP Wrapper
+
+# All code changes require approval from at least one code owner
+# Assign specific files/directories to team members or teams
+
+# Default owner for all code in the repository
+* @<Yaska1706>
+
+# CI/CD pipeline
+.github/ @<Yaska1706>
+
+# Documentation and configuration
+*.md @<Yaska1706>
+
